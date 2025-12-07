@@ -23,6 +23,7 @@ import {
   Input,
   Output,
   EventEmitter,
+  HostListener,
 } from '@angular/core';
 
 import {PageContextService} from 'services/page-context.service';
@@ -61,6 +62,13 @@ export class StateContentEditorComponent implements OnInit {
   HTML_SCHEMA!: HTMLSchema;
 
   cardHeightLimitReached = false;
+
+  // Undo/Redo history management.
+  private contentHistory: string[] = [];
+  private historyIndex: number = -1;
+  private readonly MAX_HISTORY_SIZE = 50;
+  canUndo: boolean = false;
+  canRedo: boolean = false;
 
   constructor(
     private changeDetectorRef: ChangeDetectorRef,
@@ -135,6 +143,88 @@ export class StateContentEditorComponent implements OnInit {
   openStateContentEditor(): void {
     this.editorFirstTimeEventsService.registerFirstOpenContentBoxEvent();
     this.contentEditorIsOpen = true;
+    // Initialize history with current content.
+    this.initializeHistory();
+  }
+
+  private initializeHistory(): void {
+    const currentContent = this.stateContentService.displayed.html;
+    this.contentHistory = [currentContent];
+    this.historyIndex = 0;
+    this.updateUndoRedoState();
+  }
+
+  onContentChange(): void {
+    const currentContent = this.stateContentService.displayed.html;
+    // Only add to history if content actually changed.
+    if (
+      this.contentHistory[this.historyIndex] !== currentContent &&
+      this.contentEditorIsOpen
+    ) {
+      // Remove any "future" history if we're not at the end.
+      this.contentHistory = this.contentHistory.slice(
+        0,
+        this.historyIndex + 1
+      );
+      // Add new state.
+      this.contentHistory.push(currentContent);
+      // Limit history size.
+      if (this.contentHistory.length > this.MAX_HISTORY_SIZE) {
+        this.contentHistory.shift();
+      } else {
+        this.historyIndex++;
+      }
+      this.updateUndoRedoState();
+    }
+  }
+
+  undo(): void {
+    if (this.canUndo && this.historyIndex > 0) {
+      this.historyIndex--;
+      this.stateContentService.displayed._html =
+        this.contentHistory[this.historyIndex];
+      this.updateUndoRedoState();
+    }
+  }
+
+  redo(): void {
+    if (this.canRedo && this.historyIndex < this.contentHistory.length - 1) {
+      this.historyIndex++;
+      this.stateContentService.displayed._html =
+        this.contentHistory[this.historyIndex];
+      this.updateUndoRedoState();
+    }
+  }
+
+  @HostListener('document:keydown', ['$event'])
+  handleKeyboardShortcut(event: KeyboardEvent): void {
+    if (!this.contentEditorIsOpen) {
+      return;
+    }
+    // Ctrl+Z / Cmd+Z for undo.
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+      event.preventDefault();
+      this.undo();
+    }
+    // Ctrl+Shift+Z / Cmd+Shift+Z for redo.
+    else if (
+      (event.ctrlKey || event.metaKey) &&
+      event.key === 'z' &&
+      event.shiftKey
+    ) {
+      event.preventDefault();
+      this.redo();
+    }
+    // Ctrl+Y / Cmd+Y for redo (alternative).
+    else if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
+      event.preventDefault();
+      this.redo();
+    }
+  }
+
+  private updateUndoRedoState(): void {
+    this.canUndo = this.historyIndex > 0;
+    this.canRedo = this.historyIndex < this.contentHistory.length - 1;
   }
 
   onSaveContentButtonClicked(): void {
